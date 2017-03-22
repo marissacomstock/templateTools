@@ -1,0 +1,148 @@
+#********************************************************************************************************************************
+# Copyright (c) 2013 Tippett Studio. All rights reserved.
+# $Id: faceSystem.py 52150 2017-03-09 20:36:19Z marissa $
+#**********
+
+import pymel.core as pm
+
+from tip.maya.studio.core import attribute
+from tip.maya.studio.core import error
+
+FACECTRLS = ["faceTop", "faceMid", "faceBot", "faceSplit"]
+SIDES = {"Lf":"Lt", "Rt": "Rt"}
+
+def connectFaceRig():
+    ''' connects the generic face rig  to the character face rig'''
+
+    connectFace("faceN_temp", "faceN_1")
+    lockUnusedAttrs()
+
+    if pm.objExists("jawJA_temp") and pm.objExists("jawJA_bnd"):
+        connectJaw()
+        addJawTransRotAttrs("faceN_1")
+        connectJawTransRot("faceN_1")
+    else:
+        pm.warning("No Jaw To Connect")
+    #connectSpecialAttrs()
+    #createEyeFalloffSystem()
+    pm.select("faceN_1")
+    
+def updateFaceRig(faceTemp, faceScene):
+    addJawTransRotAttrs(faceScene)
+    jawDict = connectFace(faceTemp, faceScene)
+    connectJawTransRot(faceScene, jawDict=jawDict)
+    connectSpecialAttrs()
+    pm.select(faceScene)
+
+
+def connectJaw():
+    ''' connect the jaw joint to the jaw shapes'''
+
+    jawTemp = "jawJA_temp"
+    jawBnd = "jawJA_bnd"
+
+    #jaw connections
+    jawConnections = pm.listConnections(jawTemp, plugs=True, scn=True, connections=True, destination=True)
+    for connection in jawConnections:
+        if connection[0].find("inverseScale") < 0:
+            pm.setAttr(connection[1], lock=False)
+            pm.disconnectAttr(connection[0], connection[1])
+            pm.connectAttr(jawBnd + "." + connection[0].split(".")[1], connection[1])
+            pm.setAttr(connection[1], lock=True)
+
+def connectFace(faceN=None):
+    '''connect the face rig temp to character face rig'''
+    try:
+        faceN = pm.PyNode(faceN)
+
+    except error.MayaNodeError, err:
+            raise error.MayaNodeError, err
+
+def lockAttrs(ctrl):
+    '''locks the individual attrs'''
+    cons = pm.listConnections(ctrl, source=True, connections=True, plugs=True, skipConversionNodes=True)
+
+    attrs = pm.listAttr(ctrl, keyable=True)
+
+    connectedAttrs = list()
+    for attr in attrs:
+        for con in cons:
+            if con[0].split(".")[1] == str(attr):
+                connectedAttrs.append(attr)
+
+    unConnectedAttrs = list(set(attrs) - set(connectedAttrs))
+
+
+    for attr in unConnectedAttrs:
+        pm.setAttr(ctrl + "." + attr, lock=True, keyable=False)
+
+def addJawTransRotAttrs(faceScene=None):
+    if not pm.attributeQuery('jawOpenRemap', node=faceScene, exists=True):
+        pm.addAttr(faceScene, longName="jawOpenRemap", attributeType='float')
+    if not pm.attributeQuery('jawCloseRemap', node=faceScene, exists=True):
+        pm.addAttr(faceScene, longName="jawCloseRemap", attributeType='float')
+    if not pm.attributeQuery('jawRightRemap', node=faceScene, exists=True):
+        pm.addAttr(faceScene, longName="jawRightRemap", attributeType='float')
+    if not pm.attributeQuery('jawLeftRemap', node=faceScene, exists=True):
+        pm.addAttr(faceScene, longName="jawLeftRemap", attributeType='float')
+    if not pm.attributeQuery('jawForwardRemap', node=faceScene, exists=True):
+        pm.addAttr(faceScene, longName="jawForwardRemap", attributeType='float')
+    if not pm.attributeQuery('jawBackRemap', node=faceScene, exists=True):
+        pm.addAttr(faceScene, longName="jawBackRemap", attributeType='float')
+    if not pm.attributeQuery('jawUpRemap', node=faceScene, exists=True):
+        pm.addAttr(faceScene, longName="jawUpRemap", attributeType='float')
+    if not pm.attributeQuery('jawDownRemap', node=faceScene, exists=True):
+        pm.addAttr(faceScene, longName="jawDownRemap", attributeType='float')
+
+
+def connectJawTransRot(faceScene=None, jawDict=None):
+    #set default
+    if jawDict:
+        pm.setAttr(faceScene + ".jawOpenRemap", jawDict["jawOpen"], keyable=True)
+        pm.setAttr(faceScene + ".jawCloseRemap", jawDict["jawClose"], keyable=True)
+        pm.setAttr(faceScene + ".jawRightRemap", jawDict["jawRight"], keyable=True)
+        pm.setAttr(faceScene + ".jawLeftRemap", jawDict["jawLeft"], keyable=True)
+        pm.setAttr(faceScene + ".jawForwardRemap", jawDict["jawForward"], keyable=True)
+        pm.setAttr(faceScene + ".jawBackRemap", jawDict["jawBack"], keyable=True)
+        pm.setAttr(faceScene + ".jawUpRemap", jawDict["jawUp"], keyable=True)
+        pm.setAttr(faceScene + ".jawDownRemap", jawDict["jawDown"], keyable=True)
+    else:
+        pm.setAttr(faceScene + ".jawOpenRemap", -20, keyable=True)
+        pm.setAttr(faceScene + ".jawCloseRemap", 5, keyable=True)
+        pm.setAttr(faceScene + ".jawRightRemap", 1, keyable=True)
+        pm.setAttr(faceScene + ".jawLeftRemap", -1, keyable=True)
+        pm.setAttr(faceScene + ".jawForwardRemap", 2, keyable=True)
+        pm.setAttr(faceScene + ".jawBackRemap", -2, keyable=True)
+        pm.setAttr(faceScene + ".jawUpRemap", 1, keyable=True)
+        pm.setAttr(faceScene + ".jawDownRemap", -1, keyable=True)
+
+    #connect jaw rotate
+    if pm.objExists('jawDownBlendRC'):
+        if not pm.isConnected(faceScene + ".jawOpenRemap", "jawDownBlendRC.red[1].red_Position"):
+            pm.connectAttr(faceScene + ".jawOpenRemap", "jawDownBlendRC.red[1].red_Position")
+        if not pm.isConnected(faceScene + ".jawCloseRemap", "jawDownBlendRC.green[1].green_Position"):
+            pm.connectAttr(faceScene + ".jawCloseRemap", "jawDownBlendRC.green[1].green_Position")
+    else:
+        pm.warning('jawDownBlendRC Remap does not exist.')
+        #create transX system
+    if pm.objExists('jawTranslateLeftRightRC'):
+        if not pm.isConnected(faceScene + ".jawRightRemap", "jawTranslateLeftRightRC.red[1].red_Position"):
+            pm.connectAttr(faceScene + ".jawRightRemap", "jawTranslateLeftRightRC.red[1].red_Position")
+        if not pm.isConnected(faceScene + ".jawLeftRemap", "jawTranslateLeftRightRC.green[1].green_Position"):
+            pm.connectAttr(faceScene + ".jawLeftRemap", "jawTranslateLeftRightRC.green[1].green_Position")
+    else:
+        pm.warning('jawTranslateLeftRightRC Remap does not exist')
+        #create transY system
+    if pm.objExists('jawTranslateForwardBackRC'):
+        if not pm.isConnected(faceScene + ".jawForwardRemap", "jawTranslateForwardBackRC.red[1].red_Position"):
+            pm.connectAttr(faceScene + ".jawForwardRemap", "jawTranslateForwardBackRC.red[1].red_Position")
+        if not pm.isConnected(faceScene + ".jawBackRemap", "jawTranslateForwardBackRC.green[1].green_Position"):
+            pm.connectAttr(faceScene + ".jawBackRemap", "jawTranslateForwardBackRC.green[1].green_Position")
+    else:
+        pm.warning('jawTranslateForwardBackRC Remap does not exist')
+
+
+def connectSpecialAttrs():
+    pm.setAttr("faceMidLf_bnd.pupilSize", keyable=True)
+    pm.setAttr("faceMidRt_bnd.pupilSize", keyable=True)
+                              

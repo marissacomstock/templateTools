@@ -1,0 +1,176 @@
+#*******************************************************************************
+# Copyright (c) 2012 Tippett Studio. All rights reserved.
+# $Id: digitSystem.py 52150 2017-03-09 20:36:19Z marissa $
+#*******************************************************************************
+
+import pymel.core as pm
+from tip.maya.studio.core import *
+from tip.maya.puppet.tools.templateTools.templateSystems import muscleTwistSystem
+from tip.maya.studio.tipModules import jointChain
+from tip.maya.studio.tipModules import skeleton
+from tip.maya.studio.tipModules import controller
+from tip.maya.studio.tipModules import constraint
+from tip.maya.studio.nodetypes import dagNode
+
+
+class DigitSystem():
+
+    def __init__(self,
+                 rootJoint,
+                 controls=False):
+
+        try:
+
+            # errorchecks for mel, forces puppet objects to be strings
+            self.rootJoint = checks.stringToPyNode(rootJoint)
+            self.TipName = naming.TipName(name=rootJoint)
+
+        except error.ArgumentError, err:
+            raise error.ArgumentError, err
+
+        except error.MayaNodeError, err:
+            raise error.MayaNodeError, err
+
+
+        self.metaTopJnts = list()
+        self.digitTopJnts = list()
+        self.ikJnts = list()
+        self.ikHandles = list()
+
+        children = self.rootJoint.listRelatives(allDescendents=True)
+
+        self.bRootJoint = None
+        #check to see if there all multiple joints in this system with things from the system parented under
+        for child in children:
+            if child.find('Shape') < 0:
+                if child.nodeBase.get() == self.rootJoint.nodeBase.get() and not child.nodeDescriptor.get() and \
+                         child.nodeIndex.get().find('End') < 0:
+                    self.bRootJoint = child
+                elif child.nodeBase.get() == self.rootJoint.nodeBase.get() and not child.nodeDescriptor.get() and \
+                         not child.nodeIndex.get().find('End') < 0:
+                    self.rootEndJoint = child
+
+        # get the top meta and top digit joints
+        for child in children:
+            if child.find('Shape') < 0:
+                if (child.nodeBase.get().find('meta') > -1 or child.nodeBase.get().find('Meta') > -1) \
+                        and child.nodeIndex.get() == 'A' and not child.nodeDescriptor.get() and not child.hasAttr('twistSystem'):
+                    self.metaTopJnts.append(child)
+                elif child.nodeIndex.get() == 'A' and not child.nodeDescriptor.get() and not child.hasAttr('twistSystem'):
+                    self.digitTopJnts.append(child)
+
+        #get rid of any digit that doesnt have a meta
+        for digit in reversed(self.digitTopJnts):
+            nodeIndex=True
+            for meta in self.metaTopJnts:
+                #print meta.nodeBase.get()[-1], digit.nodeIndex.get()
+                if meta.nodeBase.get()[-1] == digit.nodeBase.get()[-1]:
+                    nodeIndex=False
+        
+            if nodeIndex:
+                self.digitTopJnts.remove(digit)
+
+        #parent fingers to self.bRootJoint
+        for jnt in self.digitTopJnts:
+            print jnt
+            jnt.getParent().setParent(self.bRootJoint)
+
+        #create Ik jnts
+        for i, meta in enumerate(self.metaTopJnts):
+            jntChain = jointChain.JointChain(meta, recursive=True)
+            handle, effector = pm.ikHandle(startJoint=meta, endEffector=jntChain[-1])
+            handle.renameNode(name=meta, nodeType='scHandle')
+            effector.renameNode(name=meta, nodeType='effector')
+            self.ikHandles.append(handle)
+            self.ikHandles[-1].setParent(self.bRootJoint)
+
+        #Create twist system
+        for i, meta in enumerate(self.metaTopJnts):
+            endJoint = pm.PyNode(naming.TipName(name=meta, index='end').name)
+            muscleSystem = muscleTwistSystem.MuscleTwistSystem(startJoint=meta,
+                                                               endJoint=endJoint,
+                                                               name=meta,
+                                                               scale=True,
+                                                               planar=False,
+                                                               offset=False)
+
+            muscleSystem.startJnt.getParent().setParent(self.rootJoint)
+            muscleSystem.aimAt.getParent().setParent(self.digitTopJnts[i])
+
+        for i, jnt in enumerate(self.digitTopJnts):
+            constraint.Constraint(driven=jnt.getParent(),
+                                  drivers=self.metaTopJnts[i],
+                                  point=True,
+                                  orient=False,
+                                  scale=False,
+                                  maintainPosition=False,
+                                  maintainOffset=True,
+                                  skip='y',
+                                  lockWeights=False)
+
+        if controls:
+            self.create_controls()
+
+    def create_controls(self):
+
+        pm.select(self.rootJoint)
+        self.ctrlGrp = pm.joint()
+        self.ctrlGrp.renameNode(name=self.TipName, base='%sDigitControl', descriptor='group', suffix='1')
+        self.ctrlGrp.addCon()
+
+        #create twist
+        pm.select(self.bRootJoint)
+        self.twistJnt = pm.joint()
+        ctrlName = self.twistJnt.renameNode(name=self.TipName, base='%sTwist', suffix='1')
+        self.twistJnt.addCon()
+        self.addControls(controlShape=25, jnt=self.twistJnt, name=ctrlName, color=self.TipName.getColor())
+        self.twistJnt.getParent().setParent(self.ctrlGrp)
+
+        #create Rock Outer
+        pm.select(self.metaTopJnts[-1])
+        self.rockOuter = pm.joint()
+        ctrlName = self.rockOuter.renameNode(name=self.TipName, base='%sRockOuter', suffix='1')
+        self.rockOuter.addCon()
+        self.addControls(controlShape=27, jnt=self.rockOuter, name=ctrlName, color=self.TipName.getColor())
+        self.rockOuter.getParent().setParent(self.ctrlGrp)
+
+        #create Rock Inner
+        pm.select(self.metaTopJnts[0])
+        self.rockInner = pm.joint()
+        ctrlName = self.rockInner.renameNode(name=self.TipName, base='%sRockInner', suffix='1')
+        self.rockInner.addCon()
+        self.addControls(controlShape=26, jnt=self.rockInner, name=ctrlName, color=self.TipName.getColor())
+        self.rockInner.getParent().setParent(self.ctrlGrp)
+
+        #create Front Heel Pivot
+        pm.select(self.rootEndJoint)
+        self.frontToe = pm.joint()
+        ctrlName = self.frontToe.renameNode(name=self.TipName, base='%sFrontToe', suffix='1')
+        self.frontToe.addCon()
+        self.addControls(controlShape=30, jnt=self.frontToe, name=ctrlName, color=self.TipName.getColor())
+        self.frontToe.getParent().setParent(self.ctrlGrp)
+
+        #footHeelIk
+        pm.select(self.bRootJoint)
+        self.heelIk = pm.joint()
+        ctrlName = self.heelIk.renameNode(name=self.TipName, base='%sHeelIk', suffix='1')
+        self.heelIk.addCon()
+        self.addControls(controlShape=28, jnt=self.heelIk, name=ctrlName, color=self.TipName.getColor())
+        self.heelIk.getParent().setParent(self.ctrlGrp)
+
+        #footHeelPivot
+        pm.select(self.rootJoint)
+        self.heelPivot = pm.joint()
+        ctrlName = self.heelPivot.renameNode(name=self.TipName, base='%sHeelPivot', suffix='1')
+        self.heelPivot.addCon()
+        self.addControls(controlShape=29, jnt=self.heelPivot, name=ctrlName, color=self.TipName.getColor())
+        self.heelPivot.getParent().setParent(self.ctrlGrp)
+
+    def addControls(self, controlShape, jnt, name, color):
+        ctrl = controller.Controller(name=name,
+                                     positionNode=jnt,
+                                     color=color,
+                                     controlShape = controlShape)
+        ctrl.copyShapes(jnt)
+        pm.delete(ctrl)
+

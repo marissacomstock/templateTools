@@ -1,0 +1,9 @@
+K 13
+svn:mergeinfo
+V 488
+/maya/branches/corrective_dev/modules/python/tip/maya/puppet/tools/templateTools:34283-34329
+/maya/branches/pupDevBranch/modules/python/tip/maya/puppet/components/tools/templateTools:36991-38136
+/maya/branches/tipMaya-clean/modules/python/tip/maya/puppet/components/tools/templateTools:40664-40884
+/maya/trunk/modules/python/tip/maya/puppet/components/tools/templateTools:38137-40663,40885-40998
+/rnd/branches/furWorkflow2011/modules/python/tip/maya/puppet/tools/templateTools:27734-31375
+END

@@ -1,0 +1,245 @@
+#********************************************************************************************************************************
+# Copyright (c) 2013 Tippett Studio. All rights reserved.
+# $Id$
+#*******************************************************************************
+
+import os
+import sys, re
+import pymel.core as pm
+
+from tip.qt.pkg import QtCore, QtGui, uic
+
+from tip.maya.studio.core import *
+from tip.maya.puppet.utils.decorators import undoable
+from tip.maya.studio.nodetypes import dagNode
+
+from tip.maya.puppet.tools.templateTools.templateSystems  import eyeSystem
+from tip.maya.puppet.tools.templateTools.templateSystems import lipSystem
+#from tip.maya.puppet.tools.templateTools.templateSystems  import faceSwap
+
+FILEPATH = os.path.dirname(__file__).replace('templateWidgets', 'templateUIs')
+__dialogs = list()
+
+form_class, base_class = uic.loadUiType(os.path.join(FILEPATH, "faceWidget.ui"))
+
+
+class FaceWidget(form_class, base_class):
+
+    closeSignal = QtCore.Signal()
+    refreshSignal = QtCore.Signal()
+
+    def __init__(self):
+        super(FaceWidget, self).__init__()
+        self.setupUi(self)
+        self.setObjectName('FaceTemplateTool')
+        self.setWindowTitle('Face Template Tool')
+
+        #EYE RIG
+        self.lEyeSystem = None
+        self.rEyeSystem = None
+        self.placeLoc1 = None
+        
+        self.createEyeSystem_pushButton.clicked.connect(self.assignObject)
+        self.deleteEyeSystem_pushButton.clicked.connect(self.assignObject)
+
+
+        self.loadHeadJoint_pushButton.clicked.connect(self.assignObject)
+        self.loadJawJoint_pushButton.clicked.connect(self.assignObject)
+        self.createLocator_pushButton.clicked.connect(self.assignObject)
+        self.createLipSystem_pushButton.clicked.connect(self.assignObject)
+        self.deleteLipSystem_pushButton.clicked.connect(self.assignObject)
+
+        '''
+        self.closeUpperAttr_pushButton.clicked.connect(self.assignObject)
+        self.closeLowerAttr_pushButton.clicked.connect(self.assignObject)
+        self.connectLidAttrs_pushButton.clicked.connect(self.assignObject)
+        self.connectFaceRig_pushButton.clicked.connect(self.connectFaceRig)
+        self.updateFaceRig_pushButton.clicked.connect(self.updateFaceRig)
+        '''
+
+    def assignObject(self):
+        sender = self.sender()
+
+        #checkboxes
+        #eye system
+        if sender is self.createEyeSystem_pushButton:
+            self.create_eyeSystem()
+        elif sender is self.deleteEyeSystem_pushButton:
+            self.delete_system()
+
+        #lip system
+        #load head joint
+        elif sender is self.loadHeadJoint_pushButton:
+            headJnt = pm.ls(selection=True)
+            if len(headJnt) != 1:
+                pm.error("Select one head joint")
+            else:
+                self.headJoint_lineEdit.setText("%s" % headJnt[0])
+        #load jaw joint
+        elif sender is self.loadJawJoint_pushButton:
+            jawJnt = pm.ls(selection=True)
+            if len(jawJnt) != 1:
+                pm.error("Select one jaw joint")
+            else:
+                self.jawJoint_lineEdit.setText("%s" % jawJnt[0])
+
+        elif sender is self.createLocator_pushButton:
+            self.create_locator()
+        elif sender is self.createLipSystem_pushButton:
+            self.create_lipSystem()
+        elif sender is self.deleteLipSystem_pushButton:
+            self.delete_system()
+
+    @undoable
+    def create_locator(self):
+        ##########create LIP RIG on any joint
+        try:
+            jawJnt = pm.PyNode(self.jawJoint_lineEdit.text())
+            headJnt = pm.PyNode(self.headJoint_lineEdit.text())
+
+        except error.ArgumentError, err:
+            raise error.ArgumentError, err
+
+        except error.MayaNodeError, err:
+            raise error.MayaNodeError, err
+
+        locName = naming.TipName(name=jawJnt, base='%sLOC' % jawJnt.nodeBase.get())
+        #start from scratch everytime
+        if pm.objExists(locName):
+            pm.delete(locName)
+
+        pm.select(jawJnt)
+        tempJnt = pm.joint()
+        tempJnt.setParent(world=True)
+        if round(abs(tempJnt.jointOrientZ.get()), -1) == 90:
+            if tempJnt.jointOrientY.get() < 0:
+                tempJnt.jointOrientY.set(-90)
+            else:
+                tempJnt.jointOrientY.set(90)
+        else:
+            tempJnt.jointOrientZ.set(0)
+
+        loc = pm.spaceLocator(name=locName)
+        loc.setOverrideColor(13)
+        loc.matchTo(tempJnt)
+        loc.makeIdentity(apply=True, scale=False, rotate=False, jointOrient=False)
+        loc.addTag('jawJoint', jawJnt)
+        loc.addTag('headJoint', headJnt)
+        pm.delete(tempJnt)
+
+
+    @undoable
+    def create_lipSystem(self):
+        try:
+            loc = pm.ls(selection=True)[0]
+            jawJnt = pm.PyNode(loc.jawJoint.get())
+            headJnt = pm.PyNode(loc.headJoint.get())
+
+
+        except error.ArgumentError, err:
+            raise error.ArgumentError, err
+
+        except error.MayaNodeError, err:
+            raise error.MayaNodeError, err
+
+        lipSystem.LipSystem(loc,
+                          head=headJnt,
+                          jaw=jawJnt)
+
+    @undoable
+    def delete_system(self):
+
+        eyeSystems = pm.ls(selection=True)
+
+        for system in eyeSystems:
+            if system.nodeDescriptor.get() == "Rig":
+                nodes = pm.ls('*.%s' % system, objectsOnly=True)
+                for node in nodes:
+                    if pm.objExists(node):
+                        pm.delete(node)
+                pm.delete(system)
+
+    @undoable
+    def create_eyeSystem(self):
+        #Get Start Joint
+        #can select multiple eye joints at once
+        try:
+            startJoints = pm.ls(selection=True)
+        except IndexError:
+            pm.error("Select a startJoint")
+
+        for startJoint in startJoints:
+            #check if socket and end joint exist
+            try:
+                socketJoint = pm.PyNode(naming.TipName(name=startJoint, base='%sSocket' % startJoint.nodeBase.get()).name)
+                endJoint = pm.PyNode(naming.TipName(name=startJoint, index='end').name)
+            except pm.MayaNodeError:
+                pm.warning("Start Joint must have socket and end joint ")
+
+            if self.eye_checkBox.isChecked():
+                name = naming.TipName(name=startJoint, nodeType='chain', suffix='1')
+                exists = self.checkScene(jnt=startJoint, system=name)
+
+                if not exists:
+                    eyeSystem.EyeSystem(startJoint,
+                                        socketJoint,
+                                        endJoint,
+                                        startJoint,
+                                        eye=True,
+                                        slideEye=False,
+                                        membrane=False)
+
+            if self.eyeSkinSlide_checkBox.isChecked():
+                name = naming.TipName(name=startJoint, base='%sSkinSlide' % startJoint.nodeBase.get(),
+                                      nodeType='chain', suffix='1')
+                exists = self.checkScene(jnt=startJoint, system=name)
+
+                if not exists:
+                    eyeSystem.EyeSystem(endJoint,
+                                socketJoint,
+                                endJoint,
+                                startJoint,
+                                eye=False,
+                                slideEye=True,
+                                membrane=False)
+
+            if self.membrane_checkBox.isChecked():
+                name = naming.TipName(name=startJoint, base='%sMembrane' % startJoint.nodeBase.get(),
+                                      nodeType='chain', suffix='1')
+                exists = self.checkScene(jnt=startJoint, system=name)
+
+                if not exists:
+                    eyeSystem.EyeSystem(startJoint,
+                            socketJoint,
+                            endJoint,
+                            startJoint,
+                            eye=False,
+                            slideEye=False,
+                            membrane=True)
+
+    def checkScene(self, jnt=None, system=None):
+
+        try:
+            pm.PyNode(jnt)
+        except pm.MayaNodeError:
+            pm.warning("Node Doesn't exist: %s" % jnt)
+            return 1
+
+        if system:
+            try:
+                pm.PyNode(system)
+                pm.warning("%s Already Exists" % system)
+                return 1
+            except:
+                return 0
+
+            return 0
+
+def FaceWidgetGui():
+    global __dialogs
+    if not __dialogs:
+        dialog = FaceWidget()
+        dialog.show()
+        __dialogs.append(dialog)
+    else:
+        __dialogs[0].show()
